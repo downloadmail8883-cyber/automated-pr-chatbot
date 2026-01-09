@@ -1,68 +1,83 @@
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import HumanMessage, SystemMessage
-import truststore
-import os
+"""
+Main entry point for the Automated PR Chatbot.
 
-# Use OS trust store globally (Windows/macOS/Linux)
-truststore.inject_into_ssl()
-
-# Set API key via env var (recommended)
-os.environ["GOOGLE_API_KEY"] = "AIzaSyA18V0BEkT1xedkS-IEOlsU1zvDTfdXu-U"
-
-llm = ChatGoogleGenerativeAI(
-    model="gemini-flash-latest",
-    temperature=0,
-)
-
-SYSTEM_PROMPT = """
-You are Data Platform Intake Bot.
-
-Your job is to:
-1. Collect required metadata for creating a data intake configuration.
-2. Ask one question at a time.
-3. Maintain a friendly, professional DevOps assistant tone.
-4. Never generate YAML or code unless explicitly asked.
-5. If a value is already provided, do not ask again.
-6. Once all fields are collected, respond with:
-   'All required details are collected. Ready to generate config.'
-
-Required fields:
-- intake_id
-- database_name
-- database_s3_location
-- database_description
-- aws_account_id
-- region
-- data_construct
-- data_env
-- data_layer
-- source_name
-- enterprise_or_func_name
-- enterprise_or_func_subgrp_name
+Flow:
+1. Collect mandatory intake data via CLI
+2. Generate YAML configuration
+3. Save YAML using database_name.yaml
+4. Create Git branch, commit YAML
+5. Push branch and raise PR automatically
 """
 
-def ask_gemini(user_input: str) -> str:
-    messages = [
-        SystemMessage(content=SYSTEM_PROMPT),
-        HumanMessage(content=user_input),
-    ]
-    response = llm.invoke(messages)
-    return response.content
+import os
+from intake_flow import collect_intake
+from yaml_generator import generate_yaml
+from git_ops import create_branch_and_commit, create_pull_request
+
+
+def main():
+    print("\nHello! I'm the Data Platform Intake Bot, ready to help you configure your new data intake.\n")
+
+
+# Step 1: Collect intake details
+
+    collected_data = collect_intake()
+
+
+# Step 2: Generate YAML
+
+    yaml_content = generate_yaml(collected_data)
+
+    print("\nGenerated YAML:\n")
+    print(yaml_content)
+
+
+# Step 3: Resolve repo root safely (works on Windows/Linux/Mac)
+
+    REPO_ROOT = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..")
+    )
+
+ # Step 4: Save YAML using database_name.yaml
+
+    yaml_dir = os.path.join(REPO_ROOT, "intake_configs")
+    os.makedirs(yaml_dir, exist_ok=True)
+
+    yaml_filename = f"{collected_data['database_name']}.yaml"
+    yaml_file_path = os.path.join(yaml_dir, yaml_filename)
+
+    with open(yaml_file_path, "w") as f:
+        f.write(yaml_content)
+
+    print(f"\nYAML file saved at:\n{yaml_file_path}")
+
+
+# Step 5: Create branch + commit YAML
+
+    branch_name = "dev"
+
+    create_branch_and_commit(
+        repo_path=REPO_ROOT,
+        branch_name=branch_name,
+        file_path=yaml_file_path,
+        content=yaml_content
+    )
+
+# Step 6: Create Pull Request
+    github_token = os.getenv("GITHUB_TOKEN")
+    repo_name = os.getenv("REPO_NAME")
+    base_branch = os.getenv("BASE_BRANCH", "dev")
+
+    pr_response = create_pull_request(
+        github_token=github_token,
+        repo_name=repo_name,
+        branch_name=branch_name,
+        base=base_branch
+    )
+
+    print("\nPull Request created successfully 🎉")
+    print(f"PR URL: {pr_response['html_url']}")
+
 
 if __name__ == "__main__":
-    while True:
-        user_input = input("You: ")
-        if user_input.lower() in ["exit", "quit"]:
-            break
-        reply = ask_gemini(user_input)
-        print("Bot:", reply)
-
-# from google.genai import Client
-
-# # Initialize client with your API key
-# client = Client(api_key="AIzaSyA18V0BEkT1xedkS-IEOlsU1zvDTfdXu-U")
-
-# # List available models
-# models = client.models.list()
-# for m in models:
-#     print(m.name, m.supported_actions)
+    main()

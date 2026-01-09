@@ -1,20 +1,22 @@
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import HumanMessage, SystemMessage
-import truststore
+"""
+Handles interaction with Gemini LLM.
+"""
 import os
+from dotenv import load_dotenv
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.messages import SystemMessage, HumanMessage
 
-# Use OS trust store globally (Windows/macOS/Linux)
-truststore.inject_into_ssl()
+# Load environment variables
+load_dotenv()
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+if not GOOGLE_API_KEY:
+    raise Exception("GOOGLE_API_KEY is not set in .env")
 
-# Set API key via env var (recommended)
-os.environ["GOOGLE_API_KEY"] = "YOUR_API_KEY"
-
-llm = ChatGoogleGenerativeAI(
-    model="gemini-1.0-pro",
-    temperature=0,
-)
+# Initialize Gemini model
+llm = ChatGoogleGenerativeAI(model='gemini-1.5-flash', temperature=0, api_key=GOOGLE_API_KEY)
 
 SYSTEM_PROMPT = """
+You are a friendly and professional Data Platform Intake Bot. Ask questions clearly and politely.
 You are Data Platform Intake Bot.
 
 Your job is to:
@@ -39,14 +41,16 @@ Required fields:
 - source_name
 - enterprise_or_func_name
 - enterprise_or_func_subgrp_name
+- data_owner_email
+- data_owner_github_uname
+- data_leader
 """
 
+chat_history = [SystemMessage(content=SYSTEM_PROMPT)]
+
 def ask_gemini(user_input: str) -> str:
-    messages = [
-        SystemMessage(content=SYSTEM_PROMPT),
-        HumanMessage(content=user_input),
-    ]
-    response = llm.invoke(messages)
+    """Send a user message to Gemini and return its response, maintaining chat history."""
+    chat_history.append(HumanMessage(content=user_input))
+    response = llm.invoke(chat_history)
+    chat_history.append(response)
     return response.content
-
-
