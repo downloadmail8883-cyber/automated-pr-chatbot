@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Data Platform Intake Bot",
+  "description": "Chat with the Data Platform Intake Bot directly from GitHub.",
+  "version": "0.1",
+  "permissions": ["activeTab"],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://github.com/saikrishna2003/automated-pr-chatbot",
+        "https://github.com/saikrishna2003/automated-pr-chatbot/*"
+      ],
+      "js": ["content.js"],
+      "css": ["style.css"]
+    }
+  ]
+}

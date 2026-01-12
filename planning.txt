@@ -1,0 +1,10 @@
+User → Chatbot → Validation → YAML Generation → Git PR → Review
+
+Phase 1:
+Chatbot + adding the required services + PR raise
+
+Phase 2:
+automated validation of resources
+
+Phase 3:
+output from codebuild
