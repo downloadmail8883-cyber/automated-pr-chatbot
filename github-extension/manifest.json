@@ -7,8 +7,7 @@
   "content_scripts": [
     {
       "matches": [
-        "https://github.com/saikrishna2003/automated-pr-chatbot",
-        "https://github.com/saikrishna2003/automated-pr-chatbot/*"
+        "https://github.com/*"
       ],
       "js": ["content.js"],
       "css": ["style.css"]
