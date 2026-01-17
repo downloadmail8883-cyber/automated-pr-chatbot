@@ -1,450 +1,274 @@
+# Data Platform Intake Bot 🤖
 
-# data-intake-chatops
+AI-powered chatbot for automated Glue Database Pull Request creation. Built with LangChain, Groq LLM, and FastAPI.
 
-## Overview
+## 🌟 Features
 
-**data-intake-chatops** is a conversational ChatOps system designed to simplify and standardize data platform intake workflows. Instead of manually creating configuration files, users interact with a chatbot that guides them through a structured intake conversation. The chatbot collects required metadata, converts it into a YAML configuration, and automatically raises a GitHub Pull Request following GitOps best practices.
+- **LLM-Driven Conversations**: Natural language interface powered by Llama 3.1
+- **Intelligent Field Collection**: Automatically gathers required information through conversation
+- **Automated PR Creation**: Creates GitHub Pull Requests with YAML configurations
+- **Chrome Extension**: Seamlessly integrates into GitHub UI
+- **Input Validation**: Ensures data quality before PR creation
 
-This project is intentionally scoped as an **MVP / POC** and focuses only on:
+## 📋 Prerequisites
 
-* Conversational intake
-* Structured metadata collection
-* YAML generation
-* Automated Pull Request creation
+- Python 3.8+
+- Git installed and configured
+- GitHub account with repository access
+- Groq API account
 
-> 🚫 No AWS provisioning is performed in this project.
-
----
-
-## Why This Project Exists
-
-Data platform onboarding often suffers from:
-
-* Manual YAML/JSON editing
-* Missing or inconsistent metadata
-* Naming convention violations
-* Back-and-forth reviews
-
-This project demonstrates how **AI + ChatOps + GitOps** can:
-
-* Enforce structured intake through conversation
-* Reduce human error
-* Improve developer experience
-* Standardize data onboarding workflows
-
----
-
-## Key Capabilities
-
-* 🤖 **Conversational Intake**
-  A Gemini-powered chatbot asks one question at a time and guides users through required metadata fields.
-* 🧠 **Stateful Sessions**
-  The chatbot remembers previous answers and only asks for missing information.
-* 📄 **YAML Configuration Generation**
-  User responses are converted into a clean, human-readable YAML config.
-* 🔁 **GitOps Automation**
-  The system creates a feature branch, commits the YAML file, and raises a Pull Request to the `dev` branch.
-
----
-
-## High-Level Arc# data-intake-chatops
-
-## Overview
-
-**data-intake-chatops** is a conversational ChatOps system designed to simplify and standardize data platform intake workflows. Instead of manually creating configuration files, users interact with a chatbot that guides them through a structured intake conversation. The chatbot collects required metadata, converts it into a YAML configuration, and automatically raises a GitHub Pull Request following GitOps best practices.
-
-This project is intentionally scoped as an **MVP / POC** and focuses only on:
-
-* Conversational intake
-* Structured metadata collection
-* YAML generation
-* Automated Pull Request creation
-
-> 🚫 No AWS provisioning is performed in this project.
-
----
-
-## Why This Project Exists
-
-Data platform onboarding often suffers from:
-
-* Manual YAML/JSON editing
-* Missing or inconsistent metadata
-* Naming convention violations
-* Back-and-forth reviews
-
-This project demonstrates how **AI + ChatOps + GitOps** can:
-
-* Enforce structured intake through conversation
-* Reduce human error
-* Improve developer experience
-* Standardize data onboarding workflows
-
----
-
-## Key Capabilities
-
-* 🤖 **Conversational Intake**
-  A Gemini-powered chatbot asks one question at a time and guides users through required metadata fields.
-
-* 🧠 **Stateful Sessions**
-  The chatbot remembers previous answers and only asks for missing information.
-
-* 📄 **YAML Configuration Generation**
-  User responses are converted into a clean, human-readable YAML config.
-
-* 🔁 **GitOps Automation**
-  The system creates a feature branch, commits the YAML file, and raises a Pull Request to the `dev` branch.
-
----
-
-## High-Level Architecture
-
-```
-User (CLI / UI / API)
-        │
-        ▼
-Conversation Engine (Gemini)
-        │
-        ▼
-Intake State Manager
-        │
-        ▼
-YAML Generator
-        │
-        ▼
-GitHub Branch + Pull Request
-```
-
----
-
-## Tech Stack
-
-| Layer          | Technology                    |
-| -------------- | ----------------------------- |
-| Language       | Python 3.10+                  |
-| LLM            | Google Gemini (via LangChain) |
-| API Framework  | FastAPI (optional for MVP)    |
-| YAML Handling  | PyYAML                        |
-| Git Automation | GitPython                     |
-| PR Creation    | GitHub REST API               |
-
----
-
-## Project Structure
-
-```
-data-intake-chatops/
-│
-├── app/
-│   ├── main.py               # Application entry point
-│   ├── chatbot.py            # Gemini LLM interaction
-│   ├── intake_flow.py        # Intake questions & state management
-│   ├── yaml_generator.py     # YAML creation logic
-│   ├── git_ops.py            # Git branch & PR automation
-│
-├── sessions/                 # Stored session state (MVP)
-├── requirements.txt
-└── README.md
-```
-
----
-
-## Intake Fields (MVP Scope)
-
-The chatbot currently collects the following required fields:
-
-* `intake_id`
-* `database_name`
-* `database_s3_location`
-* `database_description`
-* `aws_account_id`
-* `region`
-* `data_construct`
-* `data_env`
-* `data_layer`
-* `source_name`
-* `enterprise_or_func_name`
-* `enterprise_or_func_subgrp_name`
-
-> ⚠️ Validation rules and naming conventions are intentionally **out of scope** for this MVP and will be added later.
-
----
-
-## Example Generated YAML
-
-```yaml
-intake_id: M0000562
-database_name: minerva_dev_src_corp_gtc_cdp_sap_gtc_prd_raw_db
-database_s3_location: s3://minerva-dev-src-corp-gtc/cdp/prd/raw/sap_gtc/
-database_description: Used to store raw tables for sap_gtc
-aws_account_id: "438465132548"
-region: us-east-1
-data_construct: Source
-data_env: prd
-data_layer: raw
-source_name: SAP_GTC
-enterprise_or_func_name: CORP
-enterprise_or_func_subgrp_name: GTC
-```
-
----
-
-## How the Flow Works (Step-by-Step)
-
-1. User starts a chatbot session
-2. Bot asks for required fields one at a time
-3. Answers are stored in session state
-4. Once all fields are collected:
-
-   * YAML file is generated
-   * Feature branch is created
-   * YAML is committed
-   * Pull Request is raised to `dev`
-
----
-
-## Running the Project (MVP)
+## 🚀 Quick Start
 
 ### 1. Clone the Repository
 
 ```bash
-git clone <repo-url>
-cd data-intake-chatops
+git clone https://github.com/your-org/data-platform-intake-bot.git
+cd data-platform-intake-bot
 ```
 
-### 2. Create Virtual Environment
+### 2. Set Up Python Environment
 
 ```bash
+# Create virtual environment
 python -m venv venv
+
+# Activate virtual environment
+# On Windows:
+venv\Scripts\activate
+# On Mac/Linux:
 source venv/bin/activate
-```
 
-### 3. Install Dependencies
+# Upgrade pip
+pip install --upgrade pip
 
-```bash
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-### 4. Set Environment Variables
+### 3. Configure Environment Variables
 
 ```bash
-export GOOGLE_API_KEY="your-gemini-api-key"
-export GITHUB_TOKEN="your-github-token"
+# Copy example environment file
+cp .env.example .env
+
+# Edit .env with your actual values
+# Required variables:
+# - GROQ_API_KEY: Get from https://console.groq.com/keys
+# - GITHUB_TOKEN: Get from https://github.com/settings/tokens
+# - REPO_NAME: Target repository (format: owner/repo)
+# - BASE_BRANCH: Usually 'main' or 'dev'
 ```
 
-### 5. Run the Application
+### 4. Run the Backend Server
 
 ```bash
-python app/main.py
+# Start the FastAPI server
+uvicorn app.api:app --reload
+
+# Server will start at: http://127.0.0.1:8000
+# API docs available at: http://127.0.0.1:8000/docs
 ```
 
----
+### 5. Install Chrome Extension
 
-## What This MVP Does NOT Do
+1. Open Chrome and navigate to `chrome://extensions/`
+2. Enable "Developer mode" (toggle in top right)
+3. Click "Load unpacked"
+4. Select the `github-extension` folder
+5. Navigate to any GitHub page to see the chatbot
 
-* ❌ No AWS resource provisioning
-* ❌ No policy validation (yet)
-* ❌ No approval workflows
-* ❌ No UI beyond CLI / API
-
-These are deliberate design choices to keep the POC focused and demo-ready.
-
----
-
-## Future Enhancements
-
-* Naming convention validation
-* Regex-based rule enforcement
-* Policy-as-code (OPA / JSON Schema)
-* Slack / MS Teams bot integration
-* Web UI
-* Approval comments and reviewers
-* AWS provisioning via Terraform
-
----
-
-## Demo Pitch (One-Liner)
-
-> "This project shows how conversational AI can replace manual data intake forms by turning human input into governed, GitOps-ready YAML and automated pull requests."
-
----
-
-## License
-
-Internal / POC
-hitecture
+## 📁 Project Structure
 
 ```
-User (CLI / UI / API)
-        │
-        ▼
-Conversation Engine (Gemini)
-        │
-        ▼
-Intake State Manager
-        │
-        ▼
-YAML Generator
-        │
-        ▼
-GitHub Branch + Pull Request
-```
-
----
-
-## Tech Stack
-
-| Layer          | Technology                    |
-| -------------- | ----------------------------- |
-| Language       | Python 3.10+                  |
-| LLM            | Google Gemini (via LangChain) |
-| API Framework  | FastAPI (optional for MVP)    |
-| YAML Handling  | PyYAML                        |
-| Git Automation | GitPython                     |
-| PR Creation    | GitHub REST API               |
-
----
-
-## Project Structure
-
-```
-data-intake-chatops/
-│
+data-platform-intake-bot/
 ├── app/
-│   ├── main.py               # Application entry point
-│   ├── chatbot.py            # Gemini LLM interaction
-│   ├── intake_flow.py        # Intake questions & state management
-│   ├── yaml_generator.py     # YAML creation logic
-│   ├── git_ops.py            # Git branch & PR automation
-│
-├── sessions/                 # Stored session state (MVP)
+│   ├── __init__.py
+│   ├── api.py                      # Main FastAPI application
+│   ├── llm/
+│   │   ├── __init__.py
+│   │   └── groq_client.py          # LLM configuration (optional)
+│   ├── services/
+│   │   ├── __init__.py
+│   │   ├── git_ops.py              # Git operations
+│   │   └── yaml_generator.py       # YAML file generation
+│   └── tools/
+│       ├── __init__.py
+│       └── glue_pr_tool.py         # LangChain tool definition
+├── github-extension/
+│   ├── content.js                  # Chrome extension script
+│   ├── style.css                   # Chatbot UI styles
+│   └── manifest.json               # Extension configuration
+├── intake_configs/                 # Generated YAML files
+├── .env.example                    # Environment template
+├── .gitignore
 ├── requirements.txt
 └── README.md
 ```
 
----
+## 🔧 Configuration
 
-## Intake Fields (MVP Scope)
+### Environment Variables
 
-The chatbot currently collects the following required fields:
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `GROQ_API_KEY` | Groq API key for LLM | `gsk_...` |
+| `GITHUB_TOKEN` | GitHub Personal Access Token | `ghp_...` |
+| `REPO_NAME` | Target repository for PRs | `company/data-configs` |
+| `BASE_BRANCH` | Base branch for PRs | `dev` or `main` |
 
-* `intake_id`
-* `database_name`
-* `database_s3_location`
-* `database_description`
-* `aws_account_id`
-* `region`
-* `data_construct`
-* `data_env`
-* `data_layer`
-* `source_name`
-* `enterprise_or_func_name`
-* `enterprise_or_func_subgrp_name`
+### GitHub Token Permissions
 
-> ⚠️ Validation rules and naming conventions are intentionally **out of scope** for this MVP and will be added later.
+Your GitHub token needs the following scopes:
+- ✅ `repo` (full control of private repositories)
 
----
+## 💬 Usage
 
-## Example Generated YAML
+### Starting a Conversation
 
-```yaml
-intake_id: M0000562
-database_name: minerva_dev_src_corp_gtc_cdp_sap_gtc_prd_raw_db
-database_s3_location: s3://minerva-dev-src-corp-gtc/cdp/prd/raw/sap_gtc/
-database_description: Used to store raw tables for sap_gtc
-aws_account_id: "438465132548"
-region: us-east-1
-data_construct: Source
-data_env: prd
-data_layer: raw
-source_name: SAP_GTC
-enterprise_or_func_name: CORP
-enterprise_or_func_subgrp_name: GTC
+1. Navigate to any GitHub page
+2. The chatbot appears in the bottom-right corner
+3. Say: "I want to create a Glue Database PR"
+4. Follow the bot's questions
+
+### Required Information
+
+The bot will collect 16 fields:
+
+1. **intake_id** - Unique identifier (e.g., INT-12345)
+2. **database_name** - Glue database name
+3. **database_s3_location** - S3 path (s3://bucket/path)
+4. **database_description** - Purpose description
+5. **aws_account_id** - 12-digit AWS account ID
+6. **source_name** - Source system name
+7. **enterprise_or_func_name** - Enterprise area
+8. **enterprise_or_func_subgrp_name** - Sub-group
+9. **region** - AWS region (e.g., us-east-1)
+10. **data_construct** - Data construct type
+11. **data_env** - Environment (dev/staging/prod)
+12. **data_layer** - Data layer (raw/curated/analytics)
+13. **data_leader** - Data owner name
+14. **data_owner_email** - Owner email
+15. **data_owner_github_uname** - GitHub username
+16. **pr_title** - Pull Request title
+
+### Example Conversation
+
+```
+You: I want to create a Glue Database PR
+
+Bot: Great! Let's start. What is the intake ID?
+
+You: INT-12345
+
+Bot: Got it. What would you like to name the database?
+
+You: analytics_prod_db
+
+Bot: Perfect. What is the S3 location for the database?
+
+You: s3://my-company-data/analytics/prod
+
+... (continues until all fields collected)
+
+Bot: ✅ Pull Request created successfully!
+     🔗 https://github.com/company/repo/pull/123
 ```
 
----
+## 🧪 Testing
 
-## How the Flow Works (Step-by-Step)
-
-1. User starts a chatbot session
-2. Bot asks for required fields one at a time
-3. Answers are stored in session state
-4. Once all fields are collected:
-
-   * YAML file is generated
-   * Feature branch is created
-   * YAML is committed
-   * Pull Request is raised to `dev`
-
----
-
-## Running the Project (MVP)
-
-### 1. Clone the Repository
+### Health Check
 
 ```bash
-git clone <repo-url>
-cd data-intake-chatops
+curl http://127.0.0.1:8000/health
 ```
 
-### 2. Create Virtual Environment
+### List Available Tools
 
 ```bash
-python -m venv venv
-source venv/bin/activate
+curl http://127.0.0.1:8000/tools
 ```
 
-### 3. Install Dependencies
+### Test Chat API
 
 ```bash
-pip install -r requirements.txt
+curl -X POST http://127.0.0.1:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [
+      {"role": "user", "content": "Hello"}
+    ]
+  }'
 ```
 
-### 4. Set Environment Variables
+## 🛠️ Development
+
+### Running in Development Mode
 
 ```bash
-export GOOGLE_API_KEY="your-gemini-api-key"
-export GITHUB_TOKEN="your-github-token"
+# Auto-reload on code changes
+uvicorn app.api:app --reload --log-level debug
 ```
 
-### 5. Run the Application
+### Adding New PR Types
 
-```bash
-python app/main.py
-```
+1. Create a new tool in `app/tools/`
+2. Define Pydantic input schema
+3. Implement PR creation function
+4. Add tool to `app/api.py`
+5. Update system prompt with new capabilities
+
+## 🐛 Troubleshooting
+
+### Backend Not Reachable
+
+- Ensure server is running: `uvicorn app.api:app --reload`
+- Check port 8000 is not in use
+- Verify CORS settings if accessing from different domain
+
+### GitHub API Errors
+
+- **401 Unauthorized**: Check `GITHUB_TOKEN` in `.env`
+- **404 Not Found**: Verify `REPO_NAME` and repository access
+- **422 Unprocessable**: PR branch might already exist
+
+### Git Operation Failures
+
+- Ensure repository is clean (no uncommitted changes)
+- Verify Git is configured with user name and email
+- Check network connection for `git pull/push`
+
+## 📝 Contributing
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/amazing-feature`
+3. Commit changes: `git commit -m 'Add amazing feature'`
+4. Push to branch: `git push origin feature/amazing-feature`
+5. Open a Pull Request
+
+## 🔒 Security
+
+- **Never commit `.env` file**
+- Rotate tokens if accidentally exposed
+- Use environment-specific tokens (dev/prod)
+- Review PR permissions before granting
+
+## 📄 License
+
+This project is licensed under the MIT License.
+
+## 🙏 Acknowledgments
+
+- Built with [LangChain](https://langchain.com/)
+- Powered by [Groq](https://groq.com/)
+- FastAPI framework by [Tiangolo](https://fastapi.tiangolo.com/)
+
+## 📞 Support
+
+For issues and questions:
+- Create an issue on GitHub
+- Contact the Data Platform team
+- Check internal documentation
 
 ---
 
-## What This MVP Does NOT Do
-
-* ❌ No AWS resource provisioning
-* ❌ No policy validation (yet)
-* ❌ No approval workflows
-* ❌ No UI beyond CLI / API
-
-These are deliberate design choices to keep the POC focused and demo-ready.
-
----
-
-## Future Enhancements
-
-* Naming convention validation
-* Regex-based rule enforcement
-* Policy-as-code (OPA / JSON Schema)
-* Slack / MS Teams bot integration
-* Web UI
-* Approval comments and reviewers
-* AWS provisioning via Terraform
-
----
-
-## Demo Pitch (One-Liner)
-
-> "This project shows how conversational AI can replace manual data intake forms by turning human input into governed, GitOps-ready YAML and automated pull requests."
-
----
-
-## License
-
-Internal / POC
+Made with ❤️ by the Data Platform Team
