@@ -1,20 +1,16 @@
 {
   "manifest_version": 3,
-  "name": "Data Platform Intake Bot",
-  "description": "AI-powered chatbot for automated Glue Database PR creation on GitHub",
+  "name": "MIW Data Platform Assistant",
+  "description": "AI assistant for creating Glue Database and S3 Bucket PRs",
   "version": "2.0.0",
-  "permissions": [
-    "activeTab"
-  ],
+  "permissions": ["activeTab"],
   "content_scripts": [
     {
-      "matches": [
-        "https://github.com/*"
-      ],
+      "matches": ["https://github.com/*"],
       "js": ["content.js"],
       "css": ["style.css"],
       "run_at": "document_idle"
     }
   ],
-  "author": "Your Team Name"
+  "author": "MIW Data Platform Team"
 }
