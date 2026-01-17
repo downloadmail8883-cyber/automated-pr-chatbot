@@ -315,7 +315,14 @@ def chat(req: ChatRequest):
                 return ChatResponse(response=result, session=session_store[req.session_id])
 
         # Check if user is providing resource data
-        if any(sep in user_input for sep in [',', ':', '\n']) and len(user_input) > 20:
+        # Must have separators AND reasonable length AND looks like actual data (not questions)
+        is_data_input = (
+            any(sep in user_input for sep in [',', ':', '\n']) and
+            len(user_input) > 30 and
+            not any(q in user_input_lower for q in ['what', 'how', 'which', 'prefer', 'format', '?'])
+        )
+
+        if is_data_input:
             resource_type = session.get("current_resource_type")
 
             if resource_type:
@@ -367,7 +374,10 @@ def chat(req: ChatRequest):
             )
 
         # Regular LLM conversation
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": "CRITICAL: You are in COLLECTION MODE. DO NOT generate, invent, or make up any data values. WAIT for the user to provide actual values. If the user has not provided data yet, ASK them to provide it in their preferred format."}
+        ]
         messages.extend(req.messages)
 
         llm_response = llm.invoke(messages)
