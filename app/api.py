@@ -1,6 +1,7 @@
 """
 Data Platform Intake Bot - Main API
 STRICT VERSION: No data hallucination allowed
+Fixed to prevent duplicate Glue DB creation in intake_configs
 """
 
 from fastapi import FastAPI
@@ -85,7 +86,7 @@ def smart_parse_input(text: str, resource_type: str) -> Dict[str, str]:
 
 
 # =========================================================
-# PR Creation
+# PR Creation - FIXED to prevent duplicate Glue DB files
 # =========================================================
 def create_multi_resource_pr(glue_dbs: List[Dict], s3_buckets: List[Dict], pr_title: str) -> str:
     try:
@@ -112,26 +113,43 @@ def create_multi_resource_pr(glue_dbs: List[Dict], s3_buckets: List[Dict], pr_ti
 
         created_files = []
 
-        for glue_data in glue_dbs:
-            glue_input = GlueDBPRInput(**glue_data)
-            yaml_content = generate_yaml(create_glue_db_yaml(glue_input))
-            yaml_dir = os.path.join(repo_root, "intake_configs", "glue_databases")
-            os.makedirs(yaml_dir, exist_ok=True)
-            yaml_path = os.path.join(yaml_dir, f"{glue_input.database_name}.yaml")
-            with open(yaml_path, "w", encoding="utf-8") as f:
-                f.write(yaml_content)
-            created_files.append(yaml_path)
+        # FIXED: Only create Glue DB files in glue_databases folder
+        if glue_dbs:
+            glue_db_dir = os.path.join(repo_root, "intake_configs", "glue_databases")
+            os.makedirs(glue_db_dir, exist_ok=True)
 
-        for s3_data in s3_buckets:
-            s3_input = S3BucketPRInput(**s3_data)
-            yaml_content = generate_yaml(create_s3_bucket_yaml(s3_input))
-            yaml_dir = os.path.join(repo_root, "intake_configs", "s3_buckets")
-            os.makedirs(yaml_dir, exist_ok=True)
-            yaml_path = os.path.join(yaml_dir, f"{s3_input.bucket_name}.yaml")
-            with open(yaml_path, "w", encoding="utf-8") as f:
-                f.write(yaml_content)
-            created_files.append(yaml_path)
+            for glue_data in glue_dbs:
+                glue_input = GlueDBPRInput(**glue_data)
+                yaml_content = generate_yaml(create_glue_db_yaml(glue_input))
 
+                # Create file ONLY in glue_databases folder
+                yaml_path = os.path.join(glue_db_dir, f"{glue_input.database_name}.yaml")
+
+                with open(yaml_path, "w", encoding="utf-8") as f:
+                    f.write(yaml_content)
+
+                created_files.append(yaml_path)
+                print(f"✅ Created Glue DB YAML: {yaml_path}")
+
+        # S3 buckets remain in their own folder
+        if s3_buckets:
+            s3_bucket_dir = os.path.join(repo_root, "intake_configs", "s3_buckets")
+            os.makedirs(s3_bucket_dir, exist_ok=True)
+
+            for s3_data in s3_buckets:
+                s3_input = S3BucketPRInput(**s3_data)
+                yaml_content = generate_yaml(create_s3_bucket_yaml(s3_input))
+
+                # Create file in s3_buckets folder
+                yaml_path = os.path.join(s3_bucket_dir, f"{s3_input.bucket_name}.yaml")
+
+                with open(yaml_path, "w", encoding="utf-8") as f:
+                    f.write(yaml_content)
+
+                created_files.append(yaml_path)
+                print(f"✅ Created S3 Bucket YAML: {yaml_path}")
+
+        # Add all created files to git
         repo.index.add(created_files)
 
         commit_msg = f"{pr_title}\n\n"
