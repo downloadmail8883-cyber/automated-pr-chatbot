@@ -1,6 +1,6 @@
 """
-Data Platform Intake Bot - FIXED VERSION
-All hallucination issues resolved
+Data Platform Intake Bot - WITH INTERACTIVE PR CONFLICT HANDLING
+User can choose to close existing PR or add to it
 """
 
 from fastapi import FastAPI
@@ -24,18 +24,28 @@ try:
     from tools.s3_pr_tool import S3BucketPRInput, create_s3_bucket_yaml, get_s3_validation_help
     from tools.iam_role_tool import IAMRolePRInput, create_iam_role_yaml
     from services.yaml_generator import generate_yaml
-    from services.git_ops import create_pull_request
+    from services.git_ops import (
+        create_pull_request,
+        close_pull_request,
+        add_to_existing_pr,
+        get_existing_pr
+    )
 except ImportError:
     from app.prompts.system_prompt import SYSTEM_PROMPT, GLUE_DB_FIELDS, S3_BUCKET_FIELDS, IAM_ROLE_FIELDS
     from app.tools.glue_pr_tool import GlueDBPRInput, create_glue_db_yaml, get_validation_help
     from app.tools.s3_pr_tool import S3BucketPRInput, create_s3_bucket_yaml, get_s3_validation_help
     from app.tools.iam_role_tool import IAMRolePRInput, create_iam_role_yaml
     from app.services.yaml_generator import generate_yaml
-    from app.services.git_ops import create_pull_request
+    from app.services.git_ops import (
+        create_pull_request,
+        close_pull_request,
+        add_to_existing_pr,
+        get_existing_pr
+    )
 
 load_dotenv()
 
-app = FastAPI(title="Data Platform Intake Bot", version="5.0.0")
+app = FastAPI(title="Data Platform Intake Bot", version="5.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -48,7 +58,7 @@ app.add_middleware(
 llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0.1)
 
 # =========================================================
-# STATE MACHINE - CLEAR STATES
+# STATE MACHINE
 # =========================================================
 class State:
     IDLE = "idle"
@@ -56,6 +66,7 @@ class State:
     COLLECTING_DATA = "collecting_data"
     AWAITING_MORE_RESOURCES = "awaiting_more_resources"
     AWAITING_PR_TITLE = "awaiting_pr_title"
+    PR_CONFLICT = "pr_conflict"  # NEW STATE
     PR_CREATED = "pr_created"
 
 # =========================================================
@@ -116,7 +127,7 @@ def format_validation_error(error: ValidationError) -> str:
     return "❌ **Validation Failed**\n\n" + "\n".join(error_messages)
 
 # =========================================================
-# PR CREATION - ONLY CALLED BY BACKEND
+# PR CREATION WITH CONFLICT DETECTION
 # =========================================================
 def create_multi_resource_pr(
     glue_dbs: List[Dict],
@@ -125,8 +136,8 @@ def create_multi_resource_pr(
     pr_title: str
 ) -> Dict[str, str]:
     """
-    Returns dict with 'status' and 'message' or 'pr_url'
-    NEVER returns fake URLs
+    Create PR with multiple resources
+    Returns dict with status and details
     """
     try:
         from git import Repo
@@ -145,7 +156,7 @@ def create_multi_resource_pr(
             if non_intake:
                 return {
                     "status": "error",
-                    "message": f"Repository has uncommitted changes: {', '.join(non_intake)}\nPlease commit or stash them first."
+                    "message": f"Repository has uncommitted changes: {', '.join(non_intake)}"
                 }
 
         git.checkout("dev")
@@ -201,7 +212,7 @@ def create_multi_resource_pr(
                 created_files.append(yaml_path)
                 print(f"✅ Created: {yaml_path}")
 
-        # Git operations
+        # Git operations - commit and push
         repo.index.add(created_files)
 
         commit_msg = f"{pr_title}\n\n"
@@ -215,7 +226,9 @@ def create_multi_resource_pr(
         repo.index.commit(commit_msg.strip())
         repo.remote("origin").push("dev")
 
-        # Create PR - THIS IS THE ONLY PLACE PR IS CREATED
+        print("✅ Changes committed and pushed to fork's dev branch")
+
+        # Try to create PR
         try:
             pr = create_pull_request(
                 github_token=os.getenv("GITHUB_TOKEN1"),
@@ -234,14 +247,30 @@ def create_multi_resource_pr(
             }
 
         except RuntimeError as pr_error:
-            if "already exists" in str(pr_error).lower():
-                return {
-                    "status": "pr_exists",
-                    "message": "A PR already exists. Your changes have been pushed to your fork's dev branch."
-                }
+            error_msg = str(pr_error)
+
+            # Check for PR conflict using special format: "PR_EXISTS:number:url:title"
+            if error_msg.startswith("PR_EXISTS:"):
+                parts = error_msg.split(":", 3)
+                if len(parts) >= 4:
+                    pr_number = parts[1]
+                    pr_url = parts[2]
+                    pr_title_existing = parts[3]
+
+                    return {
+                        "status": "pr_exists",
+                        "pr_number": pr_number,
+                        "pr_url": pr_url,
+                        "pr_title": pr_title_existing,
+                        "glue_count": len(glue_dbs),
+                        "s3_count": len(s3_buckets),
+                        "iam_count": len(iam_roles),
+                        "message": "A PR already exists. Changes are committed to your fork."
+                    }
+
             return {
                 "status": "error",
-                "message": str(pr_error)
+                "message": error_msg
             }
 
     except Exception as e:
@@ -264,7 +293,9 @@ def get_session(sid: str = "default") -> dict:
             "s3_buckets": [],
             "iam_roles": [],
             "current_resource_type": None,
-            "conversation_history": []
+            "conversation_history": [],
+            "pr_conflict_data": None,  # Store PR conflict details
+            "pending_pr_title": None   # Store PR title during conflict
         }
     return session_store[sid]
 
@@ -276,8 +307,11 @@ def reset_session(sid: str):
         "s3_buckets": [],
         "iam_roles": [],
         "current_resource_type": None,
-        "conversation_history": []
+        "conversation_history": [],
+        "pr_conflict_data": None,
+        "pending_pr_title": None
     }
+    print(f"🔄 Session {sid} reset")
 
 # =========================================================
 # MODELS
@@ -318,10 +352,121 @@ def chat(req: ChatRequest):
         user_input = req.messages[-1].get("content", "").strip()
         user_lower = user_input.lower()
 
+        # ===== STATE: PR CONFLICT - USER CHOOSING OPTION =====
+        if session["state"] == State.PR_CONFLICT:
+            conflict_data = session["pr_conflict_data"]
+
+            # Option 1: Add to existing PR
+            if any(kw in user_lower for kw in ["add", "existing", "option 1", "1", "keep"]):
+                try:
+                    # Add comment to existing PR
+                    comment = (
+                        f"## 🔄 New Resources Added\n\n"
+                        f"Additional resources have been added via MIW Data Platform Assistant:\n\n"
+                        f"- **{conflict_data['glue_count']} Glue Database(s)**\n"
+                        f"- **{conflict_data['s3_count']} S3 Bucket(s)**\n"
+                        f"- **{conflict_data['iam_count']} IAM Role(s)**\n\n"
+                        f"Please review the latest commits."
+                    )
+
+                    add_to_existing_pr(
+                        github_token=os.getenv("GITHUB_TOKEN1"),
+                        repo_name=os.getenv("REPO_NAME"),
+                        pr_number=int(conflict_data['pr_number']),
+                        comment=comment
+                    )
+
+                    response = (
+                        f"✅ **Perfect! Changes added to existing PR!**\n\n"
+                        f"📦 **What was added:**\n"
+                        f"• {conflict_data['glue_count']} Glue Database(s)\n"
+                        f"• {conflict_data['s3_count']} S3 Bucket(s)\n"
+                        f"• {conflict_data['iam_count']} IAM Role(s)\n\n"
+                        f"🔗 **View PR:** {conflict_data['pr_url']}\n\n"
+                        f"Your changes are now in PR #{conflict_data['pr_number']}. "
+                        f"I've added a comment to notify the reviewers!\n\n"
+                        f"Ready to create more resources? 🚀"
+                    )
+
+                    reset_session(req.session_id)
+                    return ChatResponse(response=response)
+
+                except Exception as e:
+                    response = (
+                        f"✅ **Changes are in the existing PR!**\n\n"
+                        f"Your resources have been committed and will appear in PR #{conflict_data['pr_number']}.\n\n"
+                        f"🔗 {conflict_data['pr_url']}\n\n"
+                        f"(Note: Couldn't add comment, but your changes are there!)\n\n"
+                        f"Ready for more? 🚀"
+                    )
+                    reset_session(req.session_id)
+                    return ChatResponse(response=response)
+
+            # Option 2: Close existing PR and create new one
+            elif any(kw in user_lower for kw in ["close", "new", "option 2", "2", "fresh"]):
+                try:
+                    # Close the existing PR
+                    close_comment = (
+                        f"🔒 Closing this PR to create a new one.\n\n"
+                        f"A fresh PR will be created with the updated resources."
+                    )
+
+                    close_result = close_pull_request(
+                        github_token=os.getenv("GITHUB_TOKEN1"),
+                        repo_name=os.getenv("REPO_NAME"),
+                        pr_number=int(conflict_data['pr_number']),
+                        comment=close_comment
+                    )
+
+                    print(f"✅ Closed PR #{conflict_data['pr_number']}")
+
+                    # Now create new PR with pending data
+                    result = create_multi_resource_pr(
+                        glue_dbs=session["glue_dbs"],
+                        s3_buckets=session["s3_buckets"],
+                        iam_roles=session["iam_roles"],
+                        pr_title=session["pending_pr_title"]
+                    )
+
+                    if result["status"] == "success":
+                        response = (
+                            f"🎉 **Success! Old PR closed, new PR created!**\n\n"
+                            f"🔒 **Closed:** PR #{conflict_data['pr_number']}\n"
+                            f"✨ **New PR:** {result['pr_url']}\n\n"
+                            f"📦 **Included:**\n"
+                            f"• {len(session['glue_dbs'])} Glue Database(s)\n"
+                            f"• {len(session['s3_buckets'])} S3 Bucket(s)\n"
+                            f"• {len(session['iam_roles'])} IAM Role(s)\n\n"
+                            f"Your fresh PR is ready for review! Want to create more? 🚀"
+                        )
+                        reset_session(req.session_id)
+                        return ChatResponse(response=response)
+                    else:
+                        response = f"❌ Closed old PR but failed to create new one: {result.get('message', 'Unknown error')}"
+                        reset_session(req.session_id)
+                        return ChatResponse(response=response)
+
+                except Exception as e:
+                    traceback.print_exc()
+                    response = f"❌ Failed to close PR: {str(e)}\n\nTry closing it manually on GitHub."
+                    reset_session(req.session_id)
+                    return ChatResponse(response=response)
+
+            else:
+                # Invalid choice
+                return ChatResponse(
+                    response=(
+                        "Please choose an option:\n\n"
+                        "**Option 1:** Type **'add to existing'** or **'1'**\n"
+                        "→ Your changes will be added to the current PR\n\n"
+                        "**Option 2:** Type **'close and create new'** or **'2'**\n"
+                        "→ I'll close the old PR and create a fresh one"
+                    )
+                )
+
         # ===== STATE: AWAITING PR TITLE =====
         if session["state"] == State.AWAITING_PR_TITLE:
             if len(user_input.split()) >= 3:
-                # Create PR - BACKEND ONLY
                 result = create_multi_resource_pr(
                     glue_dbs=session["glue_dbs"],
                     s3_buckets=session["s3_buckets"],
@@ -329,7 +474,7 @@ def chat(req: ChatRequest):
                     pr_title=user_input
                 )
 
-                # Handle response based on status
+                # Handle SUCCESS
                 if result["status"] == "success":
                     response = (
                         f"🎉 **SUCCESS!** Your PR is live!\n\n"
@@ -337,28 +482,45 @@ def chat(req: ChatRequest):
                         f"🔗 **PR Link:** {result['pr_url']}\n"
                         f"📦 **Included:** {len(session['glue_dbs'])} Glue DB(s), "
                         f"{len(session['s3_buckets'])} S3 Bucket(s), {len(session['iam_roles'])} IAM Role(s)\n\n"
-                        f"Your team can review it now! Want to create another PR?"
+                        f"✅ Session reset! Want to create another PR?"
                     )
                     reset_session(req.session_id)
                     return ChatResponse(response=response)
 
+                # Handle PR CONFLICT
                 elif result["status"] == "pr_exists":
+                    # Store conflict data in session
+                    session["pr_conflict_data"] = result
+                    session["pending_pr_title"] = user_input
+                    session["state"] = State.PR_CONFLICT
+
                     response = (
-                        f"🤔 A PR already exists!\n\n"
-                        f"**Good news:** Your changes are pushed to your fork's dev branch.\n"
-                        f"📦 Added: {len(session['glue_dbs'])} Glue DB(s), "
-                        f"{len(session['s3_buckets'])} S3 Bucket(s), {len(session['iam_roles'])} IAM Role(s)\n\n"
-                        f"Check your existing PR - these resources should appear there!\n\n"
-                        f"Want to start a fresh PR? Just tell me what to create!"
+                        f"⚠️ **Hold on! A PR already exists!**\n\n"
+                        f"📋 **Existing PR:** {result.get('pr_title', 'Unknown')}\n"
+                        f"🔗 **URL:** {result['pr_url']}\n"
+                        f"🔢 **Number:** #{result['pr_number']}\n\n"
+                        f"✅ **Good news:** Your changes are already committed and pushed!\n\n"
+                        f"📦 **What's ready to add:**\n"
+                        f"• {result['glue_count']} Glue Database(s)\n"
+                        f"• {result['s3_count']} S3 Bucket(s)\n"
+                        f"• {result['iam_count']} IAM Role(s)\n\n"
+                        f"**What would you like to do?**\n\n"
+                        f"**Option 1:** Type **'add to existing'** or **'1'**\n"
+                        f"→ Add your new resources to the existing PR #{result['pr_number']}\n\n"
+                        f"**Option 2:** Type **'close and create new'** or **'2'**\n"
+                        f"→ Close PR #{result['pr_number']} and create a fresh PR with your resources\n\n"
+                        f"Choose wisely! 🤔"
                     )
-                    reset_session(req.session_id)
                     return ChatResponse(response=response)
 
+                # Handle ERROR
                 else:
-                    return ChatResponse(response=f"❌ Error: {result['message']}")
+                    error_response = f"❌ Error: {result['message']}\n\n🔄 Session reset. Try again?"
+                    reset_session(req.session_id)
+                    return ChatResponse(response=error_response)
             else:
                 return ChatResponse(
-                    response="Please provide a descriptive PR title (at least 3 words).\nExample: 'Add sales analytics Glue database for LATAM'"
+                    response="Please provide a descriptive PR title (at least 3 words).\nExample: 'Add sales analytics resources for LATAM'"
                 )
 
         # ===== DETECT DATA INPUT =====
@@ -428,11 +590,11 @@ def chat(req: ChatRequest):
                     f"📦 {len(session['s3_buckets'])} S3 Bucket(s)\n"
                     f"📦 {len(session['iam_roles'])} IAM Role(s)\n\n"
                     f"What should the PR title be?\n"
-                    f"(Example: 'Add sales analytics Glue database for LATAM')"
+                    f"(Example: 'Add sales analytics resources for LATAM')"
                 )
             )
 
-        # ===== LLM CONVERSATION (NO PR CREATION HERE) =====
+        # ===== LLM CONVERSATION =====
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {
@@ -441,9 +603,8 @@ def chat(req: ChatRequest):
                     "CRITICAL RULES:\n"
                     "1. NEVER generate fake PR links\n"
                     "2. NEVER say 'PR created' - you CANNOT create PRs\n"
-                    "3. ONLY collect information and ask for PR title\n"
-                    "4. The BACKEND creates PRs, not you\n"
-                    "5. NEVER invent data - ALWAYS wait for user input"
+                    "3. ONLY collect information\n"
+                    "4. The BACKEND creates PRs, not you"
                 )
             }
         ]
@@ -474,7 +635,7 @@ def chat(req: ChatRequest):
 # =========================================================
 @app.get("/")
 def root():
-    return {"status": "online", "version": "5.0.0", "service": "Data Platform Intake Bot"}
+    return {"status": "online", "version": "5.1.0", "service": "Data Platform Intake Bot"}
 
 @app.post("/reset")
 def reset(session_id: str = "default"):
@@ -502,5 +663,6 @@ def get_session_info(session_id: str = "default"):
             "s3_buckets": len(session["s3_buckets"]),
             "iam_roles": len(session["iam_roles"])
         },
-        "current_resource_type": session["current_resource_type"]
+        "current_resource_type": session["current_resource_type"],
+        "has_pr_conflict": session["pr_conflict_data"] is not None
     }
