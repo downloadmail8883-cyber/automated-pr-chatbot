@@ -1,128 +1,149 @@
-console.log("✅ Data Platform Intake Bot injected");
+// Content script for MIW Data Platform Assistant Chrome Extension
+// Injects chatbot UI into GitHub pages
 
-// ---- Create chatbot container ----
-const chatbot = document.createElement("div");
-chatbot.id = "dpib-chatbot";
+const API_URL = "http://localhost:8000"; // Change to your backend URL
+let sessionId = `session-${Date.now()}`;
+let conversationHistory = [];
 
-chatbot.innerHTML = `
-  <div id="dpib-header">
-    <div id="dpib-header-title">Intake Automation Bot</div>
-    <button id="dpib-minimize" title="Minimize">−</button>
-  </div>
-
-  <div id="dpib-messages">
-    <div class="dpib-bot">
-      👋 Hi! I'm your <strong>Intake Automation PR Bot</strong>
-      <br /><br />
-      I'll help you create automated pull requests for your data platform resources - no manual YAML editing needed!
-      <br /><br />
-      I can assist you with:
-      <br />
-      • <strong>Glue Databases</strong> - Database configurations
-      <br />
-      • <strong>S3 Buckets</strong> - Storage bucket setups
-      <br />
-      • <strong>IAM Roles</strong> - Access management configurations
-      <br /><br />
-      Just tell me what you'd like to create and I'll guide you through it! 🚀
+// Create chatbot UI
+function createChatbotUI() {
+  const container = document.createElement("div");
+  container.id = "miw-chatbot-container";
+  container.innerHTML = `
+    <div id="miw-chatbot-header">
+      <span>🤖 MIW Data Platform Assistant</span>
+      <button id="miw-chatbot-minimize">−</button>
     </div>
-  </div>
+    <div id="miw-chatbot-messages"></div>
+    <div id="miw-chatbot-input-area">
+      <textarea id="miw-chatbot-input" placeholder="Type your message..."></textarea>
+      <button id="miw-chatbot-send">Send</button>
+    </div>
+    <div id="miw-chatbot-reset">
+      <button id="miw-reset-button">🔄 Reset Session</button>
+    </div>
+  `;
 
-  <div id="dpib-input-container">
-    <input
-      id="dpib-input"
-      type="text"
-      placeholder="What would you like to create today?"
-      autocomplete="off"
-    />
-    <button id="dpib-send">Send</button>
-  </div>
-`;
+  document.body.appendChild(container);
 
-// ---- Append to page ----
-document.body.appendChild(chatbot);
+  // Event listeners
+  document.getElementById("miw-chatbot-send").addEventListener("click", sendMessage);
+  document.getElementById("miw-chatbot-input").addEventListener("keypress", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
 
-// ---- Get elements ----
-const input = chatbot.querySelector("#dpib-input");
-const button = chatbot.querySelector("#dpib-send");
-const messages = chatbot.querySelector("#dpib-messages");
-const minimizeBtn = chatbot.querySelector("#dpib-minimize");
+  document.getElementById("miw-chatbot-minimize").addEventListener("click", () => {
+    const container = document.getElementById("miw-chatbot-container");
+    container.classList.toggle("minimized");
+  });
 
-// ---- Minimize functionality ----
-let isMinimized = false;
+  document.getElementById("miw-reset-button").addEventListener("click", resetSession);
 
-minimizeBtn.addEventListener("click", () => {
-  isMinimized = !isMinimized;
-
-  if (isMinimized) {
-    chatbot.classList.add("minimized");
-    minimizeBtn.textContent = "□";
-    minimizeBtn.title = "Maximize";
-  } else {
-    chatbot.classList.remove("minimized");
-    minimizeBtn.textContent = "−";
-    minimizeBtn.title = "Minimize";
-  }
-});
-
-// ---- Chat logic ----
-let conversation = [];
-
-function addMessage(text, className) {
-  const div = document.createElement("div");
-  div.className = className;
-  div.innerHTML = text.replace(/\n/g, "<br />");
-  messages.appendChild(div);
-  messages.scrollTop = messages.scrollHeight;
+  // Initial greeting
+  addBotMessage("👋 Hey there! I'm your MIW Data Platform Assistant!\n\nI help you create automated Pull Requests for:\n✨ **Glue Databases**\n✨ **S3 Buckets**\n✨ **IAM Roles**\n\nWhat would you like to create today?");
 }
 
+// Add message to chat
+function addMessage(message, isUser = false) {
+  const messagesDiv = document.getElementById("miw-chatbot-messages");
+  const messageDiv = document.createElement("div");
+  messageDiv.className = `miw-message ${isUser ? "user" : "bot"}`;
+
+  // Convert markdown-style formatting
+  const formattedMessage = message
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\n/g, '<br>');
+
+  messageDiv.innerHTML = formattedMessage;
+  messagesDiv.appendChild(messageDiv);
+  messagesDiv.scrollTop = messagesDiv.scrollHeight;
+}
+
+function addBotMessage(message) {
+  addMessage(message, false);
+}
+
+function addUserMessage(message) {
+  addMessage(message, true);
+}
+
+// Send message to backend
 async function sendMessage() {
+  const input = document.getElementById("miw-chatbot-input");
   const userMessage = input.value.trim();
+
   if (!userMessage) return;
 
-  addMessage(userMessage, "dpib-user");
-  conversation.push({ role: "user", content: userMessage });
+  addUserMessage(userMessage);
   input.value = "";
 
-  // Typing indicator
+  conversationHistory.push({ role: "user", content: userMessage });
+
+  // Show typing indicator
   const typingDiv = document.createElement("div");
-  typingDiv.className = "dpib-bot dpib-typing";
-  typingDiv.innerHTML = "<span></span><span></span><span></span>";
-  messages.appendChild(typingDiv);
-  messages.scrollTop = messages.scrollHeight;
+  typingDiv.id = "typing-indicator";
+  typingDiv.className = "miw-message bot";
+  typingDiv.innerHTML = "<em>Typing...</em>";
+  document.getElementById("miw-chatbot-messages").appendChild(typingDiv);
 
   try {
-    const response = await fetch("http://127.0.0.1:8000/chat", {
+    const response = await fetch(`${API_URL}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: conversation }),
+      body: JSON.stringify({
+        messages: conversationHistory,
+        session_id: sessionId
+      })
     });
 
-    typingDiv.remove();
+    // Remove typing indicator
+    const indicator = document.getElementById("typing-indicator");
+    if (indicator) indicator.remove();
 
     if (!response.ok) {
-      throw new Error(`Server returned ${response.status}`);
+      throw new Error(`API error: ${response.status}`);
     }
 
     const data = await response.json();
-    addMessage(data.response, "dpib-bot");
-    conversation.push({ role: "assistant", content: data.response });
 
-  } catch (err) {
-    typingDiv.remove();
-    addMessage(
-      "⚠️ Hmm, I'm having trouble connecting to the backend right now. Please make sure the server is running on port 8000.",
-      "dpib-bot dpib-error"
-    );
-    console.error("Backend error:", err);
+    conversationHistory.push({ role: "assistant", content: data.response });
+    addBotMessage(data.response);
+
+  } catch (error) {
+    // Remove typing indicator
+    const indicator = document.getElementById("typing-indicator");
+    if (indicator) indicator.remove();
+
+    addBotMessage(`❌ Error: ${error.message}\n\nPlease make sure the backend is running at ${API_URL}`);
   }
 }
 
-button.addEventListener("click", sendMessage);
+// Reset session
+async function resetSession() {
+  try {
+    await fetch(`${API_URL}/reset`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId })
+    });
 
-input.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    sendMessage();
+    // Clear UI
+    document.getElementById("miw-chatbot-messages").innerHTML = "";
+    conversationHistory = [];
+    sessionId = `session-${Date.now()}`;
+
+    addBotMessage("✅ Session reset! What would you like to create?");
+  } catch (error) {
+    addBotMessage(`❌ Reset failed: ${error.message}`);
   }
-});
+}
+
+// Initialize when page loads
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", createChatbotUI);
+} else {
+  createChatbotUI();
+}

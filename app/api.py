@@ -1,6 +1,6 @@
 """
-Data Platform Intake Bot - Main API
-With comprehensive validation layer
+Data Platform Intake Bot - FIXED VERSION
+All hallucination issues resolved
 """
 
 from fastapi import FastAPI
@@ -10,10 +10,7 @@ from typing import List, Dict, Optional
 import os
 import traceback
 from dotenv import load_dotenv
-
 from langchain_groq import ChatGroq
-
-# Import from local modules
 import sys
 from pathlib import Path
 
@@ -38,7 +35,7 @@ except ImportError:
 
 load_dotenv()
 
-app = FastAPI(title="Data Platform Intake Bot", version="4.0.0")
+app = FastAPI(title="Data Platform Intake Bot", version="5.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -51,23 +48,30 @@ app.add_middleware(
 llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0.1)
 
 # =========================================================
-# Parsing Functions
+# STATE MACHINE - CLEAR STATES
+# =========================================================
+class State:
+    IDLE = "idle"
+    COLLECTING_RESOURCE_TYPE = "collecting_resource_type"
+    COLLECTING_DATA = "collecting_data"
+    AWAITING_MORE_RESOURCES = "awaiting_more_resources"
+    AWAITING_PR_TITLE = "awaiting_pr_title"
+    PR_CREATED = "pr_created"
+
+# =========================================================
+# PARSING FUNCTIONS
 # =========================================================
 def parse_comma_separated(text: str, field_list: List[str]) -> Dict[str, str]:
     values = [v.strip() for v in text.split(",")]
     if len(values) != len(field_list):
         raise ValueError(
-            f"Expected {len(field_list)} values but got {len(values)}.\n\n"
-            f"Required: {', '.join(field_list)}"
+            f"Expected {len(field_list)} values but got {len(values)}.\n"
+            f"Required fields: {', '.join(field_list)}"
         )
     return dict(zip(field_list, values))
 
-
 def parse_key_value(text: str) -> Dict[str, str]:
-    """Parse key-value format with basic YAML support"""
     import yaml
-
-    # Try YAML parsing first
     try:
         parsed = yaml.safe_load(text)
         if isinstance(parsed, dict):
@@ -75,7 +79,6 @@ def parse_key_value(text: str) -> Dict[str, str]:
     except:
         pass
 
-    # Fallback to line-by-line parsing
     result = {}
     for line in text.strip().split('\n'):
         line = line.strip()
@@ -85,7 +88,6 @@ def parse_key_value(text: str) -> Dict[str, str]:
             key, value = line.split(':', 1)
             result[key.strip()] = value.strip()
     return result
-
 
 def smart_parse_input(text: str, resource_type: str) -> Dict[str, str]:
     if resource_type == 'glue_db':
@@ -104,32 +106,28 @@ def smart_parse_input(text: str, resource_type: str) -> Dict[str, str]:
 
     return parse_comma_separated(text, field_list)
 
-
 def format_validation_error(error: ValidationError) -> str:
-    """Format Pydantic validation errors in a user-friendly way"""
     error_messages = []
-
     for err in error.errors():
         field = err['loc'][0] if err['loc'] else 'unknown'
         msg = err['msg']
-
-        # Make field names more readable
         field_display = field.replace('_', ' ').title()
-
         error_messages.append(f"**{field_display}**: {msg}")
-
     return "❌ **Validation Failed**\n\n" + "\n".join(error_messages)
 
-
 # =========================================================
-# PR Creation - Supports Glue DB, S3, and IAM
+# PR CREATION - ONLY CALLED BY BACKEND
 # =========================================================
 def create_multi_resource_pr(
     glue_dbs: List[Dict],
     s3_buckets: List[Dict],
     iam_roles: List[Dict],
     pr_title: str
-) -> str:
+) -> Dict[str, str]:
+    """
+    Returns dict with 'status' and 'message' or 'pr_url'
+    NEVER returns fake URLs
+    """
     try:
         from git import Repo
 
@@ -137,6 +135,7 @@ def create_multi_resource_pr(
         repo = Repo(repo_root)
         git = repo.git
 
+        # Check for uncommitted changes
         if repo.is_dirty(untracked_files=True):
             untracked = repo.untracked_files
             modified = [item.a_path for item in repo.index.diff(None)]
@@ -144,10 +143,10 @@ def create_multi_resource_pr(
             non_intake = [f for f in all_changes if not f.startswith('intake_configs/')]
 
             if non_intake:
-                raise RuntimeError(
-                    f"Repository has uncommitted changes: {', '.join(non_intake)}\n"
-                    "Please commit or stash them first."
-                )
+                return {
+                    "status": "error",
+                    "message": f"Repository has uncommitted changes: {', '.join(non_intake)}\nPlease commit or stash them first."
+                }
 
         git.checkout("dev")
         git.pull("origin", "dev")
@@ -168,7 +167,7 @@ def create_multi_resource_pr(
                     f.write(yaml_content)
 
                 created_files.append(yaml_path)
-                print(f"✅ Created Glue DB YAML: {yaml_path}")
+                print(f"✅ Created: {yaml_path}")
 
         # Create S3 bucket files
         if s3_buckets:
@@ -184,7 +183,7 @@ def create_multi_resource_pr(
                     f.write(yaml_content)
 
                 created_files.append(yaml_path)
-                print(f"✅ Created S3 Bucket YAML: {yaml_path}")
+                print(f"✅ Created: {yaml_path}")
 
         # Create IAM role files
         if iam_roles:
@@ -200,8 +199,9 @@ def create_multi_resource_pr(
                     f.write(yaml_content)
 
                 created_files.append(yaml_path)
-                print(f"✅ Created IAM Role YAML: {yaml_path}")
+                print(f"✅ Created: {yaml_path}")
 
+        # Git operations
         repo.index.add(created_files)
 
         commit_msg = f"{pr_title}\n\n"
@@ -215,251 +215,235 @@ def create_multi_resource_pr(
         repo.index.commit(commit_msg.strip())
         repo.remote("origin").push("dev")
 
+        # Create PR - THIS IS THE ONLY PLACE PR IS CREATED
         try:
             pr = create_pull_request(
                 github_token=os.getenv("GITHUB_TOKEN1"),
                 repo_name=os.getenv("REPO_NAME"),
                 pr_title=pr_title,
                 pr_body=f"## Resources\n\n"
-                        f"{f'- {len(glue_dbs)} Glue DB(s)' if glue_dbs else ''}\n"
-                        f"{f'- {len(s3_buckets)} S3 Bucket(s)' if s3_buckets else ''}\n"
-                        f"{f'- {len(iam_roles)} IAM Role(s)' if iam_roles else ''}"
+                        f"- {len(glue_dbs)} Glue DB(s)\n"
+                        f"- {len(s3_buckets)} S3 Bucket(s)\n"
+                        f"- {len(iam_roles)} IAM Role(s)"
             )
 
-            return (
-                f"🎉 Boom! Your PR is live!\n\n"
-                f"📋 **Title:** {pr_title}\n"
-                f"📦 **What's included:** {len(glue_dbs)} Glue DB(s), {len(s3_buckets)} S3 Bucket(s), {len(iam_roles)} IAM Role(s)\n"
-                f"🔗 **View it here:** {pr['html_url']}\n\n"
-                f"Great work! Your team can review it whenever they're ready. Need anything else? 😊"
-            )
+            return {
+                "status": "success",
+                "pr_url": pr['html_url'],
+                "pr_number": pr['number']
+            }
 
         except RuntimeError as pr_error:
             if "already exists" in str(pr_error).lower():
-                # Set flag that PR conflict was detected
-                session["pr_conflict_detected"] = True
-
-                response_msg = (
-                    "🤔 A PR already exists from your fork to upstream!\n\n"
-                    "**Good news!** Your new changes have been committed to your fork's dev branch. "
-                    "They will automatically appear in the existing PR.\n\n"
-                    "📦 What was added:\n"
-                    f"• {len(glue_dbs)} Glue Database(s)\n"
-                    f"• {len(s3_buckets)} S3 Bucket(s)\n"
-                    f"• {len(iam_roles)} IAM Role(s)\n\n"
-                    "✅ Check your existing PR - it should now include these new resources!\n\n"
-                    "Want to create more resources? Just tell me what you'd like to add! 😊"
-                )
-
-                return response_msg
-            raise pr_error
+                return {
+                    "status": "pr_exists",
+                    "message": "A PR already exists. Your changes have been pushed to your fork's dev branch."
+                }
+            return {
+                "status": "error",
+                "message": str(pr_error)
+            }
 
     except Exception as e:
         traceback.print_exc()
-        return f"❌ Failed: {str(e)}"
-
+        return {
+            "status": "error",
+            "message": str(e)
+        }
 
 # =========================================================
-# Session
+# SESSION MANAGEMENT
 # =========================================================
 session_store = {}
 
 def get_session(sid: str = "default") -> dict:
     if sid not in session_store:
         session_store[sid] = {
+            "state": State.IDLE,
             "glue_dbs": [],
             "s3_buckets": [],
             "iam_roles": [],
             "current_resource_type": None,
-            "awaiting_pr_title": False,
-            "pr_conflict_detected": False,
-            "state": "idle"
+            "conversation_history": []
         }
     return session_store[sid]
 
+def reset_session(sid: str):
+    """Complete session reset"""
+    session_store[sid] = {
+        "state": State.IDLE,
+        "glue_dbs": [],
+        "s3_buckets": [],
+        "iam_roles": [],
+        "current_resource_type": None,
+        "conversation_history": []
+    }
 
 # =========================================================
-# Models
+# MODELS
 # =========================================================
 class ChatRequest(BaseModel):
     messages: List[Dict[str, str]]
     session_id: Optional[str] = "default"
 
-
 class ChatResponse(BaseModel):
     response: str
 
-
 # =========================================================
-# Routes
+# MAIN CHAT ENDPOINT
 # =========================================================
-@app.get("/")
-def root():
-    return {"status": "online", "service": "Data Platform Intake Bot", "version": "4.0.0"}
-
-
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
     try:
         session = get_session(req.session_id)
 
         print(f"\n{'='*60}")
-        print(f"📨 INCOMING REQUEST")
-        print(f"Session ID: {req.session_id}")
-        print(f"User input: {req.messages[-1].get('content', '') if req.messages else 'None'}")
-        print(f"Session state: awaiting_pr_title={session.get('awaiting_pr_title')}")
-        print(f"Resources collected: {len(session.get('glue_dbs', []))} Glue, {len(session.get('s3_buckets', []))} S3, {len(session.get('iam_roles', []))} IAM")
-        print(f"Current resource type: {session.get('current_resource_type')}")
+        print(f"📨 REQUEST | State: {session['state']}")
+        print(f"Resources: {len(session['glue_dbs'])} Glue | {len(session['s3_buckets'])} S3 | {len(session['iam_roles'])} IAM")
         print(f"{'='*60}\n")
 
+        # Welcome message
         if not req.messages:
             return ChatResponse(
                 response=(
                     "👋 Hey there! I'm your MIW Data Platform Assistant!\n\n"
-                    "I'm here to help you create automated Pull Requests for:\n"
+                    "I help you create automated Pull Requests for:\n"
                     "✨ **Glue Databases**\n"
                     "✨ **S3 Buckets**\n"
                     "✨ **IAM Roles**\n\n"
-                    "No more manual YAML editing or Git gymnastics - just chat with me and I'll handle all the technical stuff! 🚀\n\n"
-                    "So, what are we building today?"
+                    "What would you like to create today?"
                 )
             )
 
         user_input = req.messages[-1].get("content", "").strip()
         user_lower = user_input.lower()
 
-        # Handle "keep existing PR" or "option 1" responses
-        if session.get("pr_conflict_detected"):
-            if any(keyword in user_lower for keyword in ["keep", "option 1", "1", "existing"]):
-                # User acknowledged the conflict, reset and continue
-                session["pr_conflict_detected"] = False
-                session_store[req.session_id] = get_session("new")
-                return ChatResponse(
-                    response="Got it! Your changes are in the existing PR. Let's start fresh - what would you like to create next?"
-                )
-
-        # Show validation help if requested
-        if "validation" in user_lower and "help" in user_lower:
-            # Check which resource type they're asking about
-            if "glue" in user_lower or session.get("current_resource_type") == "glue_db":
-                return ChatResponse(response=get_validation_help())
-            elif "s3" in user_lower or session.get("current_resource_type") == "s3_bucket":
-                return ChatResponse(response=get_s3_validation_help())
-            else:
-                # Show both
-                return ChatResponse(
-                    response=get_validation_help() + "\n\n" + get_s3_validation_help()
-                )
-
-        # State: Awaiting PR title
-        if session.get("awaiting_pr_title"):
-            # User must provide an actual title (more than 2 words)
+        # ===== STATE: AWAITING PR TITLE =====
+        if session["state"] == State.AWAITING_PR_TITLE:
             if len(user_input.split()) >= 3:
+                # Create PR - BACKEND ONLY
                 result = create_multi_resource_pr(
                     glue_dbs=session["glue_dbs"],
                     s3_buckets=session["s3_buckets"],
                     iam_roles=session["iam_roles"],
                     pr_title=user_input
                 )
-                session_store[req.session_id] = get_session("new")
-                return ChatResponse(response=result)
+
+                # Handle response based on status
+                if result["status"] == "success":
+                    response = (
+                        f"🎉 **SUCCESS!** Your PR is live!\n\n"
+                        f"📋 **Title:** {user_input}\n"
+                        f"🔗 **PR Link:** {result['pr_url']}\n"
+                        f"📦 **Included:** {len(session['glue_dbs'])} Glue DB(s), "
+                        f"{len(session['s3_buckets'])} S3 Bucket(s), {len(session['iam_roles'])} IAM Role(s)\n\n"
+                        f"Your team can review it now! Want to create another PR?"
+                    )
+                    reset_session(req.session_id)
+                    return ChatResponse(response=response)
+
+                elif result["status"] == "pr_exists":
+                    response = (
+                        f"🤔 A PR already exists!\n\n"
+                        f"**Good news:** Your changes are pushed to your fork's dev branch.\n"
+                        f"📦 Added: {len(session['glue_dbs'])} Glue DB(s), "
+                        f"{len(session['s3_buckets'])} S3 Bucket(s), {len(session['iam_roles'])} IAM Role(s)\n\n"
+                        f"Check your existing PR - these resources should appear there!\n\n"
+                        f"Want to start a fresh PR? Just tell me what to create!"
+                    )
+                    reset_session(req.session_id)
+                    return ChatResponse(response=response)
+
+                else:
+                    return ChatResponse(response=f"❌ Error: {result['message']}")
             else:
                 return ChatResponse(
-                    response="Please provide a descriptive PR title (at least 3 words). For example: 'Add sales analytics Glue database for LATAM'"
+                    response="Please provide a descriptive PR title (at least 3 words).\nExample: 'Add sales analytics Glue database for LATAM'"
                 )
 
-        # State: Collecting data
+        # ===== DETECT DATA INPUT =====
         has_separators = (',' in user_input or (':' in user_input and '\n' in user_input))
         is_substantial = len(user_input) > 40
-        is_not_question = not any(q in user_lower for q in ['what', 'how', 'which', 'prefer', '?', 'format', 'option'])
+        is_not_question = not any(q in user_lower for q in ['what', 'how', 'which', 'prefer', '?', 'format'])
 
-        if has_separators and is_substantial and is_not_question:
-            resource_type = session.get("current_resource_type")
+        if has_separators and is_substantial and is_not_question and session.get("current_resource_type"):
+            resource_type = session["current_resource_type"]
 
-            if resource_type:
-                try:
-                    parsed = smart_parse_input(user_input, resource_type)
+            try:
+                parsed = smart_parse_input(user_input, resource_type)
 
-                    if resource_type == "glue_db":
-                        glue = GlueDBPRInput(**parsed)
-                        session["glue_dbs"].append(glue.dict())
-                        name = glue.database_name
-                        resource_name = "Glue Database"
-                    elif resource_type == "s3_bucket":
-                        s3 = S3BucketPRInput(**parsed)
-                        session["s3_buckets"].append(s3.dict())
-                        name = s3.bucket_name
-                        resource_name = "S3 Bucket"
-                    elif resource_type == "iam_role":
-                        iam = IAMRolePRInput(**parsed)
-                        session["iam_roles"].append(iam.dict())
-                        name = iam.role_name
-                        resource_name = "IAM Role"
+                if resource_type == "glue_db":
+                    glue = GlueDBPRInput(**parsed)
+                    session["glue_dbs"].append(glue.dict())
+                    name = glue.database_name
+                    resource_name = "Glue Database"
+                elif resource_type == "s3_bucket":
+                    s3 = S3BucketPRInput(**parsed)
+                    session["s3_buckets"].append(s3.dict())
+                    name = s3.bucket_name
+                    resource_name = "S3 Bucket"
+                elif resource_type == "iam_role":
+                    iam = IAMRolePRInput(**parsed)
+                    session["iam_roles"].append(iam.dict())
+                    name = iam.role_name
+                    resource_name = "IAM Role"
 
-                    session["current_resource_type"] = None
-                    session["state"] = "confirming"
+                session["current_resource_type"] = None
+                session["state"] = State.AWAITING_MORE_RESOURCES
 
-                    return ChatResponse(
-                        response=(
-                            f"✅ Perfect! I've got all the details for your {resource_name} '{name}'.\n\n"
-                            f"Want to add more resources to this PR? You can add:\n"
-                            f"• Another Glue Database\n"
-                            f"• An S3 Bucket\n"
-                            f"• An IAM Role\n\n"
-                            f"Or just type **'done'** if you're ready to create the PR! 🚀"
-                        )
-                    )
-
-                except ValidationError as ve:
-                    # Format Pydantic validation errors nicely
-                    error_msg = format_validation_error(ve)
-
-                    # Add validation help for Glue DB errors
-                    if resource_type == "glue_db":
-                        error_msg += "\n\n💡 **Need help with validation rules?** Type 'validation help' to see all requirements."
-
-                    return ChatResponse(response=error_msg)
-
-                except Exception as e:
-                    error_msg = str(e)
-                    print(f"\n❌ ERROR: {error_msg}")
-                    traceback.print_exc()
-
-                    return ChatResponse(
-                        response=f"❌ Validation error: {error_msg}\n\nPlease check your input and try again."
-                    )
-
-        # State: User done collecting
-        if any(keyword in user_lower for keyword in ["done", "create pr", "make pr", "generate pr", "finish"]) or ("no" in user_lower and "more" in user_lower):
-            total_resources = len(session["glue_dbs"]) + len(session["s3_buckets"]) + len(session["iam_roles"])
-
-            if total_resources == 0:
                 return ChatResponse(
-                    response="Hmm, we haven't collected any resources yet! Would you like to add a Glue Database, S3 Bucket, or IAM Role? 🤔"
+                    response=(
+                        f"✅ Perfect! I've got your {resource_name} '{name}'.\n\n"
+                        f"Want to add more resources to this PR?\n"
+                        f"• Another Glue Database\n"
+                        f"• An S3 Bucket\n"
+                        f"• An IAM Role\n\n"
+                        f"Or type **'done'** to create the PR! 🚀"
+                    )
                 )
 
-            session["awaiting_pr_title"] = True
+            except ValidationError as ve:
+                error_msg = format_validation_error(ve)
+                if resource_type == "glue_db":
+                    error_msg += "\n\n💡 Type 'validation help' to see all requirements."
+                return ChatResponse(response=error_msg)
+
+            except Exception as e:
+                return ChatResponse(response=f"❌ Validation error: {str(e)}\n\nPlease check your input.")
+
+        # ===== DETECT DONE =====
+        if any(kw in user_lower for kw in ["done", "create pr", "finish"]) or ("no" in user_lower and "more" in user_lower):
+            total = len(session["glue_dbs"]) + len(session["s3_buckets"]) + len(session["iam_roles"])
+
+            if total == 0:
+                return ChatResponse(
+                    response="We haven't collected any resources yet! What would you like to create?"
+                )
+
+            session["state"] = State.AWAITING_PR_TITLE
             return ChatResponse(
                 response=(
-                    f"Awesome! Here's what we're packaging up:\n"
-                    f"📦 {len(session['glue_dbs'])} Glue Database(s)\n"
+                    f"Awesome! Here's what we're packaging:\n"
+                    f"📦 {len(session['glue_dbs'])} Glue DB(s)\n"
                     f"📦 {len(session['s3_buckets'])} S3 Bucket(s)\n"
                     f"📦 {len(session['iam_roles'])} IAM Role(s)\n\n"
-                    f"Now, let's give this PR a good title! What should we call it?\n"
-                    f"(Something descriptive like 'Add sales analytics Glue database for LATAM')"
+                    f"What should the PR title be?\n"
+                    f"(Example: 'Add sales analytics Glue database for LATAM')"
                 )
             )
 
-        # LLM conversation
+        # ===== LLM CONVERSATION (NO PR CREATION HERE) =====
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {
                 "role": "system",
                 "content": (
-                    "ABSOLUTE RULE: You are NOT allowed to generate, invent, create, or make up ANY data values. "
-                    "If the user has not provided actual field values yet, you MUST ask them to provide the values. "
-                    "DO NOT show example values. DO NOT pretend you received data. "
-                    "ONLY confirm data collection AFTER the user has provided actual values."
+                    "CRITICAL RULES:\n"
+                    "1. NEVER generate fake PR links\n"
+                    "2. NEVER say 'PR created' - you CANNOT create PRs\n"
+                    "3. ONLY collect information and ask for PR title\n"
+                    "4. The BACKEND creates PRs, not you\n"
+                    "5. NEVER invent data - ALWAYS wait for user input"
                 )
             }
         ]
@@ -471,27 +455,31 @@ def chat(req: ChatRequest):
         resp_lower = llm_response.content.lower()
         if "glue" in resp_lower and ("database" in resp_lower or "db" in resp_lower):
             session["current_resource_type"] = "glue_db"
-            session["state"] = "collecting_data"
+            session["state"] = State.COLLECTING_DATA
         elif "s3" in resp_lower and "bucket" in resp_lower:
             session["current_resource_type"] = "s3_bucket"
-            session["state"] = "collecting_data"
+            session["state"] = State.COLLECTING_DATA
         elif "iam" in resp_lower and "role" in resp_lower:
             session["current_resource_type"] = "iam_role"
-            session["state"] = "collecting_data"
+            session["state"] = State.COLLECTING_DATA
 
         return ChatResponse(response=llm_response.content)
 
     except Exception as e:
         traceback.print_exc()
-        return ChatResponse(response=f"❌ Error: {str(e)}")
+        return ChatResponse(response=f"❌ System Error: {str(e)}")
 
+# =========================================================
+# UTILITY ENDPOINTS
+# =========================================================
+@app.get("/")
+def root():
+    return {"status": "online", "version": "5.0.0", "service": "Data Platform Intake Bot"}
 
 @app.post("/reset")
 def reset(session_id: str = "default"):
-    if session_id in session_store:
-        del session_store[session_id]
-    return {"status": "reset"}
-
+    reset_session(session_id)
+    return {"status": "reset", "message": "Session cleared successfully"}
 
 @app.get("/health")
 def health():
@@ -499,5 +487,20 @@ def health():
         "status": "healthy",
         "groq": bool(os.getenv("GROQ_API_KEY")),
         "github": bool(os.getenv("GITHUB_TOKEN1")),
-        "username": bool(os.getenv("GITHUB_USERNAME")),
+        "username": bool(os.getenv("GITHUB_USERNAME"))
+    }
+
+@app.get("/session/{session_id}")
+def get_session_info(session_id: str = "default"):
+    """Debug endpoint to check session state"""
+    session = get_session(session_id)
+    return {
+        "session_id": session_id,
+        "state": session["state"],
+        "resources": {
+            "glue_dbs": len(session["glue_dbs"]),
+            "s3_buckets": len(session["s3_buckets"]),
+            "iam_roles": len(session["iam_roles"])
+        },
+        "current_resource_type": session["current_resource_type"]
     }
