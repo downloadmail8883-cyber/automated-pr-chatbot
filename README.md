@@ -218,6 +218,115 @@ cd data-intake-chatops
 ```bash
 python -m venv venv
 source venv/bin/activate
+
+```
+
+### 3. Install Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 4. Start the API
+
+```bash
+uvicorn app.api:app --reload
+```
+
+## Glue Terraform Chatbot
+
+The repo now includes a dedicated LangGraph-backed intake flow for MIF Glue job Terraform generation. It uses the process documented in the markdown guide and asks one question at a time until it has enough information to render a Terraform snippet.
+
+By default, the flow can run in deterministic mode with no API key. If you set `GROQ_API_KEY`, the chatbot also uses a Groq model to:
+
+* phrase the next question more naturally
+* interpret freeform user answers for the current field
+* generate the completion message once the `.tf` file is written
+
+The deterministic validator still controls correctness and Terraform rendering, so the model is used for conversation and extraction rather than final rule enforcement.
+
+### Groq Setup
+
+Add this to your environment or `.env` file:
+
+```env
+GROQ_API_KEY=your_groq_api_key
+GROQ_MODEL=llama-3.1-8b-instant
+GROQ_TEMPERATURE=0.1
+```
+
+You can verify whether the Terraform chatbot is using AI by checking `ai_enabled` in the `/terraform/chat` response or by starting the CLI, which prints whether Groq mode is enabled.
+
+### What It Collects
+
+The Terraform chatbot asks for:
+
+* Kafka topic name and Glue job name
+* Worker sizing and run mode
+* Kafka bootstrap endpoints and secret name
+* Optional transformer customization
+* Schema Registry endpoints and secret name
+* Iceberg catalog account IDs, database, warehouse, and checkpoint path
+* Sink assume-role ARN and session name
+
+### API Endpoints
+
+Start or continue a Terraform intake session:
+
+```bash
+curl -X POST http://127.0.0.1:8000/terraform/chat \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":"demo","message":null}'
+```
+
+Reply to the current question:
+
+```bash
+curl -X POST http://127.0.0.1:8000/terraform/chat \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":"demo","message":"dev.saptcc.multi-1.raw"}'
+```
+
+Reset the Terraform session:
+
+```bash
+curl -X POST "http://127.0.0.1:8000/terraform/reset?session_id=demo"
+```
+
+When the flow completes, the response contains:
+
+* `response`: completion summary
+* `terraform_output`: the generated Terraform text
+* `output_path`: the generated `.tf` file path on disk
+* `collected_fields`: the answers captured during intake
+* `context`: the markdown-derived rules used by the LangGraph flow
+
+The generated file is written under `generated_tf/<source-system>/<job-name>.tf` by default.
+
+### CLI Verification Flow
+
+You can also run the chatbot directly in the terminal and inspect or update values without calling the API manually:
+
+```bash
+python -m app.terraform_cli
+```
+
+Useful CLI commands:
+
+* `:fields` shows all collected answers
+* `:show` prints the current Terraform output
+* `:set field=value` updates a specific answer and re-renders when the spec is complete
+* `:write` rewrites the `.tf` file to disk
+* `:reset` starts the intake over
+
+Example update flow:
+
+```text
+:set number_of_workers=4
+:set run_mode=scheduled
+:set trigger_schedule=cron(0 1 * * ? *)
+:show
+```
 ```
 
 ### 3. Install Dependencies

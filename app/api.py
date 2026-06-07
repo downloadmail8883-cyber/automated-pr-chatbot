@@ -11,8 +11,6 @@ import os
 import traceback
 from dotenv import load_dotenv
 
-from langchain_groq import ChatGroq
-
 # Import from local modules
 import sys
 from pathlib import Path
@@ -28,6 +26,13 @@ try:
     from tools.iam_role_tool import IAMRolePRInput, create_iam_role_yaml
     from services.yaml_generator import generate_yaml
     from services.git_ops import create_pull_request
+    from llm.groq_client import get_llm, is_groq_configured
+    from services.terraform_glue_chatbot import (
+        TERRAFORM_CONTEXT,
+        reset_terraform_session,
+        run_terraform_chat_turn,
+        terraform_ai_enabled,
+    )
 except ImportError:
     from app.prompts.system_prompt import SYSTEM_PROMPT, GLUE_DB_FIELDS, S3_BUCKET_FIELDS, IAM_ROLE_FIELDS
     from app.tools.glue_pr_tool import GlueDBPRInput, create_glue_db_yaml, get_validation_help
@@ -35,6 +40,13 @@ except ImportError:
     from app.tools.iam_role_tool import IAMRolePRInput, create_iam_role_yaml
     from app.services.yaml_generator import generate_yaml
     from app.services.git_ops import create_pull_request
+    from app.llm.groq_client import get_llm, is_groq_configured
+    from app.services.terraform_glue_chatbot import (
+        TERRAFORM_CONTEXT,
+        reset_terraform_session,
+        run_terraform_chat_turn,
+        terraform_ai_enabled,
+    )
 
 load_dotenv()
 
@@ -48,7 +60,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0.1)
+llm = get_llm()
 
 # =========================================================
 # Parsing Functions
@@ -281,12 +293,52 @@ class ChatResponse(BaseModel):
     response: str
 
 
+class TerraformChatRequest(BaseModel):
+    message: Optional[str] = None
+    session_id: Optional[str] = "default"
+
+
+class TerraformChatResponse(BaseModel):
+    response: str
+    completed: bool = False
+    terraform_output: Optional[str] = None
+    output_path: Optional[str] = None
+    collected_fields: Dict[str, str] = {}
+    context: str
+    ai_enabled: bool = False
+
+
 # =========================================================
 # Routes
 # =========================================================
 @app.get("/")
 def root():
     return {"status": "online", "service": "Data Platform Intake Bot", "version": "4.0.0"}
+
+
+@app.get("/terraform/context")
+def terraform_context():
+    return {"context": TERRAFORM_CONTEXT, "ai_enabled": terraform_ai_enabled()}
+
+
+@app.post("/terraform/chat", response_model=TerraformChatResponse)
+def terraform_chat(req: TerraformChatRequest):
+    result = run_terraform_chat_turn(req.session_id or "default", req.message)
+    return TerraformChatResponse(
+        response=result["response"],
+        completed=result["completed"],
+        terraform_output=result["terraform_output"],
+        output_path=result["output_path"],
+        collected_fields={key: str(value) for key, value in result["answers"].items()},
+        context=result["context"],
+        ai_enabled=result["ai_enabled"],
+    )
+
+
+@app.post("/terraform/reset")
+def terraform_reset(session_id: str = "default"):
+    reset_terraform_session(session_id)
+    return {"status": "reset", "session_id": session_id}
 
 
 @app.post("/chat", response_model=ChatResponse)
@@ -437,6 +489,13 @@ def chat(req: ChatRequest):
         ]
         messages.extend(req.messages)
 
+        if llm is None:
+            return ChatResponse(
+                response=(
+                    "Groq is not configured. Set GROQ_API_KEY in your environment or .env file to use the conversational LLM path."
+                )
+            )
+
         llm_response = llm.invoke(messages)
 
         # Track resource type
@@ -469,7 +528,7 @@ def reset(session_id: str = "default"):
 def health():
     return {
         "status": "healthy",
-        "groq": bool(os.getenv("GROQ_API_KEY")),
+        "groq": is_groq_configured(),
         "github": bool(os.getenv("GITHUB_TOKEN1")),
         "username": bool(os.getenv("GITHUB_USERNAME")),
     }
