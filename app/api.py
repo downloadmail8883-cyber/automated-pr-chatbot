@@ -9,6 +9,7 @@ from pydantic import BaseModel, ValidationError
 from typing import List, Dict, Optional
 import os
 import traceback
+from datetime import datetime
 from dotenv import load_dotenv
 
 # Import from local modules
@@ -25,7 +26,7 @@ try:
     from tools.s3_pr_tool import S3BucketPRInput, create_s3_bucket_yaml, get_s3_validation_help
     from tools.iam_role_tool import IAMRolePRInput, create_iam_role_yaml
     from services.yaml_generator import generate_yaml
-    from services.git_ops import create_pull_request
+    from services.git_ops import create_pull_request, get_authenticated_username
     from llm.groq_client import get_llm, is_groq_configured
     from services.terraform_glue_chatbot import (
         TERRAFORM_CONTEXT,
@@ -39,7 +40,7 @@ except ImportError:
     from app.tools.s3_pr_tool import S3BucketPRInput, create_s3_bucket_yaml, get_s3_validation_help
     from app.tools.iam_role_tool import IAMRolePRInput, create_iam_role_yaml
     from app.services.yaml_generator import generate_yaml
-    from app.services.git_ops import create_pull_request
+    from app.services.git_ops import create_pull_request, get_authenticated_username
     from app.llm.groq_client import get_llm, is_groq_configured
     from app.services.terraform_glue_chatbot import (
         TERRAFORM_CONTEXT,
@@ -188,6 +189,26 @@ def deterministic_chat_response(user_input: str, session: Dict) -> Optional[str]
     )
 
 
+def build_feature_branch_name(pr_title: str) -> str:
+    safe_title = "-".join(pr_title.lower().split())
+    safe_title = "".join(ch if ch.isalnum() or ch == "-" else "-" for ch in safe_title)
+    safe_title = "-".join(part for part in safe_title.split("-") if part)[:40] or "intake-update"
+    timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    return f"intake/{timestamp}-{safe_title}"
+
+
+def get_remote_owner(remote_url: str) -> Optional[str]:
+    cleaned = remote_url.rstrip("/")
+    if cleaned.endswith(".git"):
+        cleaned = cleaned[:-4]
+    if ":" in cleaned and "@" in cleaned.split(":", 1)[0]:
+        cleaned = cleaned.split(":", 1)[1]
+    elif "github.com/" in cleaned:
+        cleaned = cleaned.split("github.com/", 1)[1]
+    parts = cleaned.split("/")
+    return parts[0] if len(parts) >= 2 else None
+
+
 # =========================================================
 # PR Creation - Supports Glue DB, S3, and IAM
 # =========================================================
@@ -203,21 +224,43 @@ def create_multi_resource_pr(
         repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         repo = Repo(repo_root)
         git = repo.git
+        github_token = os.getenv("GITHUB_TOKEN1")
+        repo_name = os.getenv("REPO_NAME")
+        base_branch = os.getenv("BASE_BRANCH", "dev")
 
-        if repo.is_dirty(untracked_files=True):
-            untracked = repo.untracked_files
-            modified = [item.a_path for item in repo.index.diff(None)]
-            all_changes = untracked + modified
-            non_intake = [f for f in all_changes if not f.startswith('intake_configs/')]
+        if not github_token:
+            raise RuntimeError("GITHUB_TOKEN1 is not set in the environment.")
+        if not repo_name:
+            raise RuntimeError("REPO_NAME is not set in the environment.")
 
-            if non_intake:
-                raise RuntimeError(
-                    f"Repository has uncommitted changes: {', '.join(non_intake)}\n"
-                    "Please commit or stash them first."
-                )
+        staged_changes = [item.a_path for item in repo.index.diff("HEAD")]
+        staged_non_intake = [f for f in staged_changes if not f.startswith('intake_configs/')]
+        if staged_non_intake:
+            raise RuntimeError(
+                f"Repository has staged changes outside intake_configs: {', '.join(staged_non_intake)}\n"
+                "Please commit or unstage them first."
+            )
 
-        git.checkout("dev")
-        git.pull("origin", "dev")
+        available_remotes = {remote.name: remote for remote in repo.remotes}
+        sync_remote = "upstream" if "upstream" in available_remotes else "origin"
+
+        git.fetch(sync_remote, base_branch)
+        git.checkout(base_branch)
+        git.pull(sync_remote, base_branch)
+
+        authenticated_user = get_authenticated_username(github_token)
+        upstream_owner = repo_name.split("/", 1)[0]
+        origin_owner = get_remote_owner(available_remotes["origin"].url) if "origin" in available_remotes else None
+        branch_name = build_feature_branch_name(pr_title)
+
+        if authenticated_user == upstream_owner and "upstream" in available_remotes:
+            push_remote = "upstream"
+            pr_head_owner = None
+        else:
+            push_remote = "origin"
+            pr_head_owner = origin_owner or authenticated_user
+
+        git.checkout("-B", branch_name)
 
         created_files = []
 
@@ -280,17 +323,20 @@ def create_multi_resource_pr(
             commit_msg += f"- Added {len(iam_roles)} IAM Role(s)\n"
 
         repo.index.commit(commit_msg.strip())
-        repo.remote("origin").push("dev")
+        repo.remote(push_remote).push(f"{branch_name}:{branch_name}")
 
         try:
             pr = create_pull_request(
-                github_token=os.getenv("GITHUB_TOKEN1"),
-                repo_name=os.getenv("REPO_NAME"),
+            github_token=github_token,
+            repo_name=repo_name,
                 pr_title=pr_title,
                 pr_body=f"## Resources\n\n"
                         f"{f'- {len(glue_dbs)} Glue DB(s)' if glue_dbs else ''}\n"
                         f"{f'- {len(s3_buckets)} S3 Bucket(s)' if s3_buckets else ''}\n"
-                        f"{f'- {len(iam_roles)} IAM Role(s)' if iam_roles else ''}"
+                f"{f'- {len(iam_roles)} IAM Role(s)' if iam_roles else ''}",
+            head_branch=branch_name,
+            base_branch=base_branch,
+            head_owner=pr_head_owner,
             )
 
             return (

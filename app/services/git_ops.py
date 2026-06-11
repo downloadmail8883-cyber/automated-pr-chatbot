@@ -34,14 +34,18 @@ def create_pull_request(
     github_token: str,
     repo_name: str,
     pr_title: str,
-    pr_body: str = None
+    pr_body: str = None,
+    head_branch: str = "dev",
+    base_branch: str = None,
+    head_owner: str = None,
 ) -> Dict[str, Any]:
     """
     Create PR from fork dev -> upstream dev
     Enhanced with better error messages for PR conflicts
     """
 
-    fork_owner = get_authenticated_username(github_token)
+    base_branch = base_branch or os.getenv("BASE_BRANCH", "dev")
+    fork_owner = head_owner or get_authenticated_username(github_token)
 
     url = f"https://api.github.com/repos/{repo_name}/pulls"
 
@@ -62,8 +66,8 @@ def create_pull_request(
     # The head should be in format: "username:branch"
     payload = {
         "title": pr_title,
-        "head": f"{fork_owner}:dev",
-        "base": "dev",
+        "head": f"{fork_owner}:{head_branch}" if head_owner else head_branch,
+        "base": base_branch,
         "body": pr_body,
         "maintainer_can_modify": False,
     }
@@ -81,14 +85,21 @@ def create_pull_request(
             # Check if it's a duplicate PR error
             if "pull request already exists" in str(error_data).lower():
                 # Try to get the existing PR URL
-                existing_pr_url = get_existing_pr_url(github_token, repo_name, fork_owner)
+                existing_pr_url = get_existing_pr_url(
+                    github_token,
+                    repo_name,
+                    fork_owner,
+                    head_branch,
+                    base_branch,
+                    use_owner=bool(head_owner),
+                )
 
                 raise RuntimeError(
-                    f"A pull request already exists from {fork_owner}:dev to {repo_name}:dev.\n"
+                    f"A pull request already exists from {payload['head']} to {repo_name}:{base_branch}.\n"
                     f"Existing PR: {existing_pr_url if existing_pr_url else 'Check your PRs on GitHub'}\n\n"
                     "Options:\n"
                     "1. Close the existing PR and create a new one\n"
-                    "2. Your changes have been pushed to your fork's dev branch and will appear in the existing PR"
+                    "2. Your changes have been pushed to the source branch and will appear in the existing PR"
                 )
             else:
                 raise RuntimeError(f"GitHub API validation error: {error_data}")
@@ -122,7 +133,14 @@ def create_pull_request(
         raise RuntimeError(f"GitHub API request failed: {str(e)}")
 
 
-def get_existing_pr_url(github_token: str, repo_name: str, fork_owner: str) -> str:
+def get_existing_pr_url(
+    github_token: str,
+    repo_name: str,
+    fork_owner: str,
+    head_branch: str,
+    base_branch: str,
+    use_owner: bool = True,
+) -> str:
     """
     Get URL of existing PR from fork to upstream
     """
@@ -135,8 +153,8 @@ def get_existing_pr_url(github_token: str, repo_name: str, fork_owner: str) -> s
 
         params = {
             "state": "open",
-            "head": f"{fork_owner}:dev",
-            "base": "dev"
+            "head": f"{fork_owner}:{head_branch}" if use_owner else head_branch,
+            "base": base_branch
         }
 
         response = requests.get(url, headers=headers, params=params, timeout=10)
