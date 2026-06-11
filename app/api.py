@@ -323,16 +323,20 @@ def create_multi_resource_pr(
 # =========================================================
 session_store = {}
 
+
+def build_session() -> dict:
+    return {
+        "glue_dbs": [],
+        "s3_buckets": [],
+        "iam_roles": [],
+        "current_resource_type": None,
+        "awaiting_pr_title": False,
+        "state": "idle"
+    }
+
 def get_session(sid: str = "default") -> dict:
     if sid not in session_store:
-        session_store[sid] = {
-            "glue_dbs": [],
-            "s3_buckets": [],
-            "iam_roles": [],
-            "current_resource_type": None,
-            "awaiting_pr_title": False,
-            "state": "idle"
-        }
+        session_store[sid] = build_session()
     return session_store[sid]
 
 
@@ -440,7 +444,7 @@ def chat(req: ChatRequest):
                     iam_roles=session["iam_roles"],
                     pr_title=user_input
                 )
-                session_store[req.session_id] = get_session("new")
+                session_store[req.session_id] = build_session()
                 return ChatResponse(response=result)
             else:
                 return ChatResponse(
