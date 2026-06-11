@@ -133,6 +133,61 @@ def format_validation_error(error: ValidationError) -> str:
     return "❌ **Validation Failed**\n\n" + "\n".join(error_messages)
 
 
+def deterministic_chat_response(user_input: str, session: Dict) -> Optional[str]:
+    user_lower = user_input.lower().strip()
+
+    if not user_lower or user_lower in {"hi", "hello", "hey", "start"}:
+        return (
+            "👋 Hi! I'm your Intake Automation PR Bot.\n\n"
+            "I can help you create automated pull requests for:\n"
+            "• Glue Databases\n"
+            "• S3 Buckets\n"
+            "• IAM Roles\n\n"
+            "Tell me which resource you want to create, and I'll guide you through the required fields."
+        )
+
+    if "glue" in user_lower and ("database" in user_lower or "db" in user_lower or "create" in user_lower):
+        session["current_resource_type"] = "glue_db"
+        session["state"] = "collecting_data"
+        return (
+            "Let's create a Glue Database. Provide the 15 required fields in one of these formats:\n\n"
+            "Comma-separated:\n"
+            f"{', '.join(GLUE_DB_FIELDS)}\n\n"
+            "Key-value:\n"
+            + "\n".join(f"{field}:" for field in GLUE_DB_FIELDS)
+        )
+
+    if "s3" in user_lower and ("bucket" in user_lower or "create" in user_lower):
+        session["current_resource_type"] = "s3_bucket"
+        session["state"] = "collecting_data"
+        return (
+            "Let's create an S3 Bucket. Provide the 7 required fields in one of these formats:\n\n"
+            "Comma-separated:\n"
+            f"{', '.join(S3_BUCKET_FIELDS)}\n\n"
+            "Key-value:\n"
+            + "\n".join(f"{field}:" for field in S3_BUCKET_FIELDS)
+        )
+
+    if "iam" in user_lower and ("role" in user_lower or "create" in user_lower):
+        session["current_resource_type"] = "iam_role"
+        session["state"] = "collecting_data"
+        return (
+            "Let's create an IAM Role. IAM roles must use key-value format. Provide these fields:\n\n"
+            + "\n".join(f"{field}:" for field in IAM_ROLE_FIELDS)
+        )
+
+    if any(keyword in user_lower for keyword in ["glue", "s3", "iam", "role", "bucket", "database"]):
+        return (
+            "I can help with Glue Databases, S3 Buckets, or IAM Roles. "
+            "Say which one you want to create, for example: 'create a Glue database'."
+        )
+
+    return (
+        "I can guide you through creating a Glue Database, S3 Bucket, or IAM Role. "
+        "Tell me which resource you want to create to get started."
+    )
+
+
 # =========================================================
 # PR Creation - Supports Glue DB, S3, and IAM
 # =========================================================
@@ -490,10 +545,9 @@ def chat(req: ChatRequest):
         messages.extend(req.messages)
 
         if llm is None:
+            fallback_response = deterministic_chat_response(user_input, session)
             return ChatResponse(
-                response=(
-                    "Groq is not configured. Set GROQ_API_KEY in your environment or .env file to use the conversational LLM path."
-                )
+                response=fallback_response
             )
 
         llm_response = llm.invoke(messages)
