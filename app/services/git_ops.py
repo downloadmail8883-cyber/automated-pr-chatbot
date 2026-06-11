@@ -9,6 +9,27 @@ from git import Repo
 import requests
 
 
+def get_authenticated_username(github_token: str) -> str:
+    url = "https://api.github.com/user"
+    headers = {
+        "Authorization": f"Bearer {github_token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+    response = requests.get(url, headers=headers, timeout=30)
+
+    if response.status_code == 200:
+        login = response.json().get("login")
+        if login:
+            return login
+
+    raise RuntimeError(
+        "Unable to determine the authenticated GitHub user from GITHUB_TOKEN1. "
+        "Please verify that the token is valid and has access to the fork."
+    )
+
+
 def create_pull_request(
     github_token: str,
     repo_name: str,
@@ -20,12 +41,7 @@ def create_pull_request(
     Enhanced with better error messages for PR conflicts
     """
 
-    fork_owner = os.getenv("GITHUB_USERNAME")
-    if not fork_owner:
-        raise RuntimeError(
-            "GITHUB_USERNAME not set in environment. "
-            "Please add your GitHub username to .env file."
-        )
+    fork_owner = get_authenticated_username(github_token)
 
     url = f"https://api.github.com/repos/{repo_name}/pulls"
 
@@ -49,6 +65,7 @@ def create_pull_request(
         "head": f"{fork_owner}:dev",
         "base": "dev",
         "body": pr_body,
+        "maintainer_can_modify": False,
     }
 
     try:
