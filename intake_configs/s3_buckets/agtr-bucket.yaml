@@ -1,0 +1,8 @@
+resource_type: s3_bucket
+intake_id: '10121'
+bucket_name: agtr-bucket
+bucket_description: bucket fro agtr
+aws_account_id: '123456543212'
+aws_region: us-east-1
+usage_type: prd
+enterprise_or_func_name: AGTR
